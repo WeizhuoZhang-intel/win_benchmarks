@@ -1,0 +1,94 @@
+diff --git a/src/transformers/trainer.py b/src/transformers/trainer.py
+index b9e103761..8188f668f 100755
+--- a/src/transformers/trainer.py
++++ b/src/transformers/trainer.py
+@@ -152,6 +152,30 @@ from .utils import (
+ )
+ from .utils.quantization_config import QuantizationMethod
+ 
++def trace_handler(prof):
++    print(prof.key_averages().table(
++        sort_by="self_cpu_time_total", row_limit=10))
++    import datetime
++    now = datetime.datetime.now()
++    log_path = os.path.join(os.getcwd(), "vit_profiling_{}_step_{}.json".format(now.strftime("%Y%m%d%H%M%S"), str(prof.step_num)))
++    prof.export_chrome_trace(log_path)
++profile_ctx = torch.profiler.profile(
++        activities=[
++            torch.profiler.ProfilerActivity.CPU,
++        ],
++        schedule=torch.profiler.schedule(
++            wait=0,
++            warmup=20,
++            active=20,
++            repeat=1),
++        on_trace_ready=trace_handler,
++        record_shapes=True,
++        profile_memory=True,
++        with_stack=True,
++        with_flops=True,
++        with_modules=True
++    )
++ 
+ 
+ DEFAULT_CALLBACKS = [DefaultFlowCallback]
+ DEFAULT_PROGRESS_CALLBACK = ProgressCallback
+@@ -3159,6 +3183,49 @@ class Trainer:
+ 
+         return PredictionOutput(predictions=output.predictions, label_ids=output.label_ids, metrics=output.metrics)
+ 
++    def benchmark_evaluate(self, model, dataloader):
++        steps_per_epoch = len(dataloader)
++        total_steps = 100
++        test_epoches = int(total_steps / steps_per_epoch)
++        print('Evaluating: Steps per Epoch {} total Steps {}'.format(steps_per_epoch, total_steps))
++        i = 0;
++        timeBuff = []
++        import time
++        with torch.profiler.profile(
++          activities=[
++             torch.profiler.ProfilerActivity.CPU],
++             schedule=torch.profiler.schedule(
++             wait=1,
++             warmup=9,
++             active=5),
++          on_trace_ready=trace_handler
++        ) as prof:
++            #with tqdm(total=total_steps, desc="Evaluating") as pbar:
++            prof = profile_ctx.__enter__()
++            for epoch in range(test_epoches + 1):
++                for it, batch in enumerate(dataloader):
++                    if epoch * steps_per_epoch + it >= total_steps:
++                        timeBuff = np.asarray(timeBuff)
++                        totalTime = np.sum(timeBuff)
++                        p50 = np.percentile(timeBuff, 50) # return 50th percentile, e.g median.
++                        p99 = np.percentile(timeBuff, 99)
++                        print("#############################")
++                        print("#############################")
++                        print('P50 Latency {:.2f} ms'.format(p50*1000))
++                        print('P99 Latency {:.2f} ms'.format(p99*1000))
++                        print('Throughput: {:.2f} sentences/s'.format(self.args.per_device_eval_batch_size*self.args.perf_run_iters/totalTime))
++                        print("#############################")
++                        break
++                    with torch.no_grad():
++                        start = time.time()
++                        outputs = model(**batch)
++                        prof.step()
++                        end = time.time()
++                        if epoch * steps_per_epoch + it > 15:
++                            timeBuff.append(end-start)
++                        prof.step()
++            profile_ctx.__exit__(None, None, None)
++
+     def evaluation_loop(
+         self,
+         dataloader: DataLoader,
+@@ -3240,6 +3307,8 @@ class Trainer:
+         all_inputs = None
+         # Will be useful when we have an iterable dataset so don't know its length.
+ 
++        self.benchmark_evaluate(model, dataloader)
++        exit()
+         observed_num_examples = 0
+         # Main evaluation loop
+         for step, inputs in enumerate(dataloader):
