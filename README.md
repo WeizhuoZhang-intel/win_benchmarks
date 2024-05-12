@@ -18,6 +18,7 @@ cd .\transformers\examples\pytorch\text-classification\
 $env:HTTP_PROXY="http://xxx.com:xxx"
 $env:HTTPS_PROXY="http://xxx.com:xxx"
 $env:HF_DATASETS_OFFLINE=1
+$env:HF_EVALUATE_OFFLINE=1
 $env:TRANSFORMERS_OFFLINE=1
 python run_glue.py --model_name_or_path distilbert-base-uncased-finetuned-sst-2-english --task_name sst2 --do_eval   --max_seq_length 384 --output_dir ./tmp --per_device_eval_batch_size 24 --dataloader_drop_last
 
